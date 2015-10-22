@@ -148,8 +148,6 @@ clean_up() {
 			done
 		fi
 	fi
-
-	remove_deps
 }
 
 
@@ -1564,7 +1562,7 @@ ARGLIST=("$@")
 OPT_SHORT="hCoiemRp:gVdL"
 OPT_LONG=('help' 'cleanbuild' 'nobuild' 'install' 'noextract' 'nocolor' 'repackage'
           'noprepare' 'config:' 'geninteg' 'verifysource' 'version' 'nodeps' 'check'
-	  'skipchecksums' 'skipinteg' 'log')
+          'skipchecksums' 'skipinteg' 'log')
 if ! parseopts "$OPT_SHORT" "${OPT_LONG[@]}" -- "$@"; then
 	exit 1 # E_INVALID_OPTION;
 fi
@@ -1599,6 +1597,35 @@ while true; do
 	shift
 done
 
+# attempt to consume any extra argv as environment variables. this supports
+# overriding (e.g. CC=clang) as well as overriding (e.g. CFLAGS+=' -g').
+extra_environment=()
+while [[ $1 ]]; do
+	if [[ $1 = [_[:alpha:]]*([[:alnum:]_])?(+)=* ]]; then
+		extra_environment+=("$1")
+	fi
+	shift
+done
+
+# setup signal traps
+trap 'clean_up' 0
+for signal in TERM HUP QUIT; do
+	trap "trap_exit $signal \"$(gettext "%s signal caught. Exiting...")\" \"$signal\"" "$signal"
+done
+trap 'trap_exit INT "$(gettext "Aborted by user! Exiting...")"' INT
+trap 'trap_exit USR1 "$(gettext "An unknown error has occurred. Exiting...")"' ERR
+
+# preserve environment variables and canonicalize path
+[[ -n ${PKGDEST} ]] && _PKGDEST=$(canonicalize_path ${PKGDEST})
+[[ -n ${SRCDEST} ]] && _SRCDEST=$(canonicalize_path ${SRCDEST})
+[[ -n ${SRCPKGDEST} ]] && _SRCPKGDEST=$(canonicalize_path ${SRCPKGDEST})
+[[ -n ${LOGDEST} ]] && _LOGDEST=$(canonicalize_path ${LOGDEST})
+[[ -n ${BUILDDIR} ]] && _BUILDDIR=$(canonicalize_path ${BUILDDIR})
+[[ -n ${PKGEXT} ]] && _PKGEXT=${PKGEXT}
+[[ -n ${SRCEXT} ]] && _SRCEXT=${SRCEXT}
+[[ -n ${GPGKEY} ]] && _GPGKEY=${GPGKEY}
+[[ -n ${PACKAGER} ]] && _PACKAGER=${PACKAGER}
+[[ -n ${CARCH} ]] && _CARCH=${CARCH}
 
 # default config is makepkg.conf
 MAKEPKG_CONF=${MAKEPKG_CONF:-$confdir/makepkg.conf}
@@ -1813,7 +1840,7 @@ fpmx() {
 	fi
 	local nm=$1; shift
 	fpm -s dir -t rpm -a $fpm_arch\
-		-p "$startdir" \
+		-p "$PKGDEST" \
 		-n "$nm" \
 		-C "$pkgdir" \
 		-v "$pkgver" --iteration "${pkgrel}${VERSION_SUFFIX}" --epoch 1 \
@@ -1830,12 +1857,9 @@ fpmx_python() {
 		"$@"
 }
 
-mkdir -p pkg src
-srcdir="$startdir/src"
-pkgdir="$startdir/pkg"
-workdir="$startdir"
-readonly srcdir pkgdir workdir
-
+# get back to our src directory so we can begin with sources
+mkdir -p "$srcdir"
+chmod a-s "$srcdir"
 cd_safe "$srcdir"
 
 if (( NOEXTRACT && ! VERIFYSOURCE )); then
@@ -1887,7 +1911,7 @@ fi
 
 msg "$(gettext "Finished making: %s")" "$pkgbase $basever ($(date))"
 
-cd_safe "$startdir"
+#cd_safe "$startdir"
 install_package
 
 exit 0 #E_OK
