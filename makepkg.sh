@@ -48,6 +48,7 @@ known_hash_algos=('md5' 'sha1' 'sha224' 'sha256' 'sha384' 'sha512')
 # Options
 BUILDFUNC=0
 CLEANBUILD=0
+CLEANUP=0
 GENINTEG=0
 INSTALL=0
 LOGGING=0
@@ -1513,6 +1514,7 @@ usage() {
 	printf -- "$(gettext "Usage: %s [options]")\n" "$0"
 	echo
 	printf -- "$(gettext "Options:")\n"
+	printf -- "$(gettext "  -c, --clean      Clean up work files after build")\n"
 	printf -- "$(gettext "  -C, --cleanbuild Remove %s dir before building the package")\n" "\$srcdir/"
 	printf -- "$(gettext "  -d, --nodeps     Skip all dependency checks")\n"
 	printf -- "$(gettext "  -e, --noextract  Do not extract source files (use existing %s dir)")\n" "\$srcdir/"
@@ -1559,8 +1561,8 @@ fi
 ARGLIST=("$@")
 
 # Parse Command Line Options.
-OPT_SHORT="hCoiemRp:gVdL"
-OPT_LONG=('help' 'cleanbuild' 'nobuild' 'install' 'noextract' 'nocolor' 'repackage'
+OPT_SHORT="hcCoiemRp:gVdL"
+OPT_LONG=('help' 'clean' 'cleanbuild' 'nobuild' 'install' 'noextract' 'nocolor' 'repackage'
           'noprepare' 'config:' 'geninteg' 'verifysource' 'version' 'nodeps' 'check'
           'skipchecksums' 'skipinteg' 'log')
 if ! parseopts "$OPT_SHORT" "${OPT_LONG[@]}" -- "$@"; then
@@ -1571,6 +1573,7 @@ unset OPT_SHORT OPT_LONG OPTRET
 
 while true; do
 	case "$1" in
+		-c|--clean)       CLEANUP=1 ;;
 		-C|--cleanbuild)  CLEANBUILD=1 ;;
 		--check)          RUN_CHECK='y' ;;
 		--config)         shift; MAKEPKG_CONF=$1 ;;
