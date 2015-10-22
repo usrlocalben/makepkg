@@ -817,10 +817,15 @@ missing_source_file() {
 # return : full version spec, including epoch (if necessary), pkgver, pkgrel
 ##
 get_full_version() {
-	if (( epoch > 0 )); then
-		printf "%s\n" "$epoch:$pkgver-$pkgrel"
+	if [[ "$RPM_DIST" = "" ]]; then
+		local trailer=''
 	else
-		printf "%s\n" "$pkgver-$pkgrel"
+		local trailer=".$RPM_DIST"
+	fi
+	if (( epoch > 0 )); then
+		printf "%s\n" "$epoch:$pkgver-$pkgrel$trailer"
+	else
+		printf "%s\n" "$pkgver-$pkgrel$trailer"
 	fi
 }
 
@@ -1836,18 +1841,60 @@ fi
 
 
 fpmx() {
+	if [[ "$url" = "" ]]; then
+		local url_param=''
+	else
+		local url_param="--url \"$url\""
+	fi
 	if [[ "$arch" = "any" ]]; then
 		local fpm_arch='all'
 	else
 		local fpm_arch='native'
 	fi
+	if [[ "$epoch" = "" ]]; then
+		local epoch_param='--epoch 0'
+	else
+		local epoch_param="--epoch $epoch"
+	fi
+	if [[ "$RPM_DIST" = "" ]]; then
+		local rpm_dist_param=''
+	else
+		local rpm_dist_param="--rpm-dist \"$RPM_DIST\""
+	fi
+	if [[ "$pkgdesc" = "" ]]; then
+		local description_param=''
+	else
+		local description_param="--description \"$pkgdesc\""
+	fi
+	if [[ "$PACKAGER" = "" ]]; then
+		local maintainer_param=''
+		warning "RPM will have current user & hostname for Packager"
+	else
+		local maintainer_param="--maintainer \"$PACKAGER\""
+	fi
+	if [[ "$RPM_VENDOR" = "" ]]; then
+		warning "RPM will have current user & hostname for Vendor"
+		local vendor_param=''
+	else
+		local vendor_param="--vendor \"$RPM_VENDOR\""
+	fi
+
 	local nm=$1; shift
-	fpm -s dir -t rpm -a $fpm_arch\
-		-p "$PKGDEST" \
-		-n "$nm" \
-		-C "$pkgdir" \
-		-v "$pkgver" --iteration "${pkgrel}${VERSION_SUFFIX}" --epoch 1 \
-		"$@"
+	local cmd="fpm -s dir -t rpm -a $fpm_arch"
+	cmd="$cmd $rpm_dist_param"
+	cmd="$cmd --rpm-os linux"
+	cmd="$cmd --package \"$PKGDEST\"" # output path
+	cmd="$cmd $maintainer_param"
+	cmd="$cmd $description_param"
+	cmd="$cmd $url_param"
+	cmd="$cmd $vendor_param"
+	cmd="$cmd --name \"$nm\""
+	cmd="$cmd --version \"$pkgver\""
+	cmd="$cmd --iteration \"$pkgrel\""
+	cmd="$cmd $epoch_param"
+	cmd="$cmd -C \"$pkgdir\""         # chdir here for contents
+	cmd="$cmd $@"
+	eval $cmd
 }
 
 fpmx_python() {
