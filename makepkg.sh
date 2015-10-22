@@ -1896,6 +1896,7 @@ fpmx() {
 	for item in "${depends[@]}"; do
 		cmd="$cmd -d \"$item\""
 	done
+	cmd="$cmd --rpm-use-file-permissions --rpm-user root --rpm-group root"
 	cmd="$cmd $@"
 	eval $cmd
 }
