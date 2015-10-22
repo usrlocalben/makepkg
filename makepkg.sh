@@ -1893,6 +1893,9 @@ fpmx() {
 	cmd="$cmd --iteration \"$pkgrel\""
 	cmd="$cmd $epoch_param"
 	cmd="$cmd -C \"$pkgdir\""         # chdir here for contents
+	for item in "${depends[@]}"; do
+		cmd="$cmd -d \"$item\""
+	done
 	cmd="$cmd $@"
 	eval $cmd
 }
