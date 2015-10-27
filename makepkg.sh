@@ -43,8 +43,7 @@ declare -r confdir='/etc'
 declare -r BUILDSCRIPT='PKGBUILD'
 declare -r startdir="$PWD"
 
-packaging_options=('strip' 'docs' 'libtool' 'staticlibs' 'emptydirs' 'zipman'
-                   'purge' 'upx' 'debug')
+packaging_options=('strip')
 other_options=('ccache' 'distcc' 'buildflags' 'makeflags')
 splitpkg_overrides=('pkgdesc' 'arch' 'url' 'license' 'groups' 'depends'
                     'optdepends' 'provides' 'conflicts' 'replaces' 'backup'
@@ -62,6 +61,7 @@ FORCE=0
 GENINTEG=0
 INSTALL=0
 LOGGING=0
+NOARCHIVE=0
 NOBUILD=0
 NODEPS=0
 NOEXTRACT=0
@@ -1383,6 +1383,124 @@ run_package() {
 	run_function_safe "$pkgfunc"
 }
 
+strip_file() {
+	local binary=$1; shift
+
+	if check_option "debug" "y"; then
+		local bid=$(build_id "$binary")
+
+		# has this file already been stripped
+		if [[ -n "$bid" ]]; then
+			if [[ -f "$dbgdir/.build-id/${bid:0:2}/${bid:2}.debug" ]]; then
+				return
+			fi
+		elif [[ -f "$dbgdir/$binary.debug" ]]; then
+			return
+		fi
+
+		mkdir -p "$dbgdir/${binary%/*}"
+		objcopy --only-keep-debug "$binary" "$dbgdir/$binary.debug"
+		objcopy --add-gnu-debuglink="$dbgdir/${binary#/}.debug" "$binary"
+
+		# create any needed hardlinks
+		while read -rd '' file ; do
+			if [[ "${binary}" -ef "${file}" && ! -f "$dbgdir/${file}.debug" ]]; then
+				mkdir -p "$dbgdir/${file%/*}"
+				ln "$dbgdir/${binary}.debug" "$dbgdir/${file}.debug"
+			fi
+		done < <(find . -type f -perm -u+w -print0 2>/dev/null)
+
+		if [[ -n "$bid" ]]; then
+			local target
+			mkdir -p "$dbgdir/.build-id/${bid:0:2}"
+
+			target="../../../../../${binary#./}"
+			target="${target/..\/..\/usr\/lib\/}"
+			target="${target/..\/usr\/}"
+			ln -s "$target" "$dbgdir/.build-id/${bid:0:2}/${bid:2}"
+
+			target="../../${binary#./}.debug"
+			ln -s "$target" "$dbgdir/.build-id/${bid:0:2}/${bid:2}.debug"
+		fi
+	fi
+
+	strip $@ "$binary"
+}
+
+tidy_install() {
+	cd_safe "$pkgdir"
+	msg "$(gettext "Tidying install...")"
+
+	# check for references to the build and package directory
+	if find "${pkgdir}" -type f -print0 | xargs -0 grep -q -I "${srcdir}" ; then
+		warning "$(gettext "Package contains reference to %s")" "\$srcdir"
+	fi
+	if find "${pkgdir}" -type f -print0 | xargs -0 grep -q -I "${pkgdirbase}" ; then
+		warning "$(gettext "Package contains reference to %s")" "\$pkgdir"
+	fi
+
+	if check_option "strip" "y"; then
+		msg2 "$(gettext "Stripping unneeded symbols from binaries and libraries...")"
+		# make sure library stripping variables are defined to prevent excess stripping
+		[[ -z ${STRIP_SHARED+x} ]] && STRIP_SHARED="-S"
+		[[ -z ${STRIP_STATIC+x} ]] && STRIP_STATIC="-S"
+
+		local binary strip_flags
+		find . -type f -perm -u+w -print0 2>/dev/null | while read -rd '' binary ; do
+			case "$(file -bi "$binary")" in
+				*application/x-sharedlib*)  # Libraries (.so)
+					strip_flags="$STRIP_SHARED";;
+				*application/x-archive*)    # Libraries (.a)
+					strip_flags="$STRIP_STATIC";;
+				*application/x-object*)
+					case "$binary" in
+						*.ko)                   # Kernel module
+							strip_flags="$STRIP_SHARED";;
+						*)
+							continue;;
+					esac;;
+				*application/x-executable*) # Binaries
+					strip_flags="$STRIP_BINARIES";;
+				*)
+					continue ;;
+			esac
+			strip_file "$binary" ${strip_flags}
+		done
+	fi
+}
+
+create_package() {
+	(( NOARCHIVE )) && return
+
+	if [[ ! -d $pkgdir ]]; then
+		error "$(gettext "Missing %s directory.")" "\$pkgdir/"
+		plain "$(gettext "Aborting...")"
+		exit 1 # $E_MISSING_PKGDIR
+	fi
+
+	cd_safe "$pkgdir"
+	msg "$(gettext "Creating package \"%s\"...")" "$pkgname"
+
+	local ret
+	run_fpm "$pkgname"
+	ret=$?
+
+	if (( ret )); then
+		error "$(gettext "Failed to create package file.")"
+		exit 1 # TODO: error code
+	fi
+
+	if (( ! ret )) && [[ ! "$PKGDEST" -ef "${startdir}" ]]; then
+		rm -f "${pkg_file/$PKGDEST/$startdir}"
+		ln -s "${pkg_file}" "${pkg_file/$PKGDEST/$startdir}"
+		ret=$?
+	fi
+
+	if (( ret )); then
+		warning "$(gettext "Failed to create symlink to package file.")"
+	fi
+}
+
 # this function always returns 0 to make sure clean-up will still occur
 install_package() {
 	(( ! INSTALL )) && return
@@ -1570,9 +1688,8 @@ run_split_packaging() {
 		mkdir "$pkgdir"
 		backup_package_variables
 		run_package $pkgname
-		#tidy_install
-		#create_package
-		#create_debug_package
+		tidy_install
+		create_package
 		restore_package_variables
 	done
 	pkgname=("${pkgname_backup[@]}")
@@ -1762,6 +1879,7 @@ usage() {
 	printf -- "$(gettext "  -R, --repackage  Repackage contents of the package without rebuilding")\n"
 	printf -- "$(gettext "  -V, --version    Show version information and exit")\n"
 	printf -- "$(gettext "  --config <file>  Use an alternate config file (instead of '%s')")\n" "$confdir/makepkg.conf"
+	printf -- "$(gettext "  --noarchive      Do not create package archive")\n"
 	printf -- "$(gettext "  --noprepare      Do not run the %s function in the %s")\n" "prepare()" "$BUILDSCRIPT"
 	printf -- "$(gettext "  --pkg <list>     Only build listed packages from a split package")\n"
 	printf -- "$(gettext "  --skipchecksums  Do not verify checksums of the source files")\n"
@@ -1803,7 +1921,7 @@ ARGLIST=("$@")
 OPT_SHORT="hcCoiemRp:gVdLf"
 OPT_LONG=('help' 'clean' 'cleanbuild' 'nobuild' 'install' 'noextract' 'nocolor' 'repackage'
           'noprepare' 'config:' 'geninteg' 'verifysource' 'version' 'nodeps' 'check'
-          'skipchecksums' 'skipinteg' 'log' 'force' 'pkg:')
+          'skipchecksums' 'skipinteg' 'log' 'force' 'pkg:' 'noarchive')
 
 # Yum Options
 OPT_LONG+=('noconfirm')
@@ -1832,6 +1950,7 @@ while true; do
 		-L|--log)         LOGGING=1 ;;
 		-m|--nocolor)     USE_COLOR='n' ;;
 		--nocheck)        RUN_CHECK='n' ;;
+		--noarchive)      NOARCHIVE=1 ;;
 		--noprepare)      RUN_PREPARE='n' ;;
 		-o|--nobuild)     NOBUILD=1 ;;
 		-p)               shift; BUILDFILE=$1 ;;
@@ -2102,7 +2221,7 @@ else
 fi
 
 
-fpmx() {
+run_fpm() {
 	if [[ "$url" = "" ]]; then
 		local url_param=''
 	else
@@ -2149,6 +2268,7 @@ fpmx() {
 	local cmd="fpm -s dir -t rpm --force -a $fpm_arch"
 	cmd="$cmd $rpm_dist_param"
 	cmd="$cmd --rpm-os linux"
+	cmd="$cmd --rpm-auto-add-directories"
 	cmd="$cmd --package \"$PKGDEST\"" # output path
 	cmd="$cmd $maintainer_param"
 	cmd="$cmd $description_param"
@@ -2166,16 +2286,6 @@ fpmx() {
 	cmd="$cmd --rpm-use-file-permissions --rpm-user root --rpm-group root"
 	cmd="$cmd $@"
 	eval $cmd
-}
-
-fpmx_python() {
-	local nm=$1; shift
-	fpm -s python -t rpm \
-		-p "$startdir" \
-		-n "$nm" \
-		-C "$pkgdir" \
-		-v "$pkgver" --iteration "${pkgrel}${VERSION_SUFFIX}" --epoch 1 \
-		"$@"
 }
 
 # get back to our src directory so we can begin with sources
@@ -2226,8 +2336,8 @@ else
 		if (( PKGFUNC )); then
 			run_package
 		fi
-		#tidy_install
-		#create_package
+		tidy_install
+		create_package
 		#create_debug_package
 	else
 		run_split_packaging
