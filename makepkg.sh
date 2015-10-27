@@ -43,12 +43,22 @@ declare -r confdir='/etc'
 declare -r BUILDSCRIPT='PKGBUILD'
 declare -r startdir="$PWD"
 
+packaging_options=('strip' 'docs' 'libtool' 'staticlibs' 'emptydirs' 'zipman'
+                   'purge' 'upx' 'debug')
+other_options=('ccache' 'distcc' 'buildflags' 'makeflags')
+splitpkg_overrides=('pkgdesc' 'arch' 'url' 'license' 'groups' 'depends'
+                    'optdepends' 'provides' 'conflicts' 'replaces' 'backup'
+                    'options' 'install' 'changelog')
+readonly -a packaging_options other_options splitpkg_overrides
+
 known_hash_algos=('md5' 'sha1' 'sha224' 'sha256' 'sha384' 'sha512')
 
 # Options
 BUILDFUNC=0
+CHECKFUNC=0
 CLEANBUILD=0
 CLEANUP=0
+FORCE=0
 GENINTEG=0
 INSTALL=0
 LOGGING=0
@@ -56,10 +66,14 @@ NOBUILD=0
 NODEPS=0
 NOEXTRACT=0
 PKGFUNC=0
+PKGLIST=()
 PREPAREFUNC=0
 REPKG=0
 SKIPCHECKSUMS=0
+SPLITPKG=0
 VERIFYSOURCE=0
+
+YUM_OPTS=
 
 shopt -s extglob
 
@@ -964,6 +978,23 @@ source_has_signatures() {
 	return 1
 }
 
+run_yum() {
+	local cmd
+	if [[ "$1" = "install" ]]; then
+		cmd=("$YUM_PATH" $YUM_OPTS "$@")
+	else
+		cmd=("$YUM_PATH" "$@")
+	fi
+	if [[ $1 != -@(T|Qq) ]]; then
+		if type -p sudo >/dev/null; then
+			cmd=(sudo "${cmd[@]}")
+		else
+			cmd=(su root -c "$(printf '%q ' "${cmd[@]}")")
+		fi
+	fi
+	"${cmd[@]}"
+}
+
 get_integlist() {
 	local integ
 	local integlist=()
@@ -1214,8 +1245,8 @@ error_function() {
 
 cd_safe() {
 	if ! cd "$1"; then
-		error "Failed to change to directory %s" "$1"
-		plain "Aborting..."
+		error "$(gettext "Failed to change to directory %s")" "$1"
+		plain "$(gettext "Aborting...")"
 		exit 1
 	fi
 }
@@ -1223,21 +1254,31 @@ cd_safe() {
 source_safe() {
 	shopt -u extglob
 	if ! source "$@"; then
-		error "Failed to source %s" "$1"
+		error "$(gettext "Failed to source %s")" "$1"
 		exit 1
 	fi
 	shopt -s extglob
 }
 
-source_buildfile() {
-	source_safe "$@"
+merge_arch_attrs() {
+	local attr supported_attrs=(
+		provides conflicts depends replaces optdepends
+		makedepends checkdepends)
+
+	for attr in "${supported_attrs[@]}"; do
+		eval "$attr+=(\"\${${attr}_$CARCH[@]}\")"
+	done
+
+	# ensure that calling this function is idempotent.
+	unset -v "${supported_attrs[@]/%/_$CARCH}"
 }
 
-install_package() {
-	(( ! INSTALL )) && return
+source_buildfile() {
+	source_safe "$@"
 
-	msg "Installing package %s with %s..." "$pkgname" "yum -y install"
-	root_install
+	if (( !SOURCEONLY )); then
+		merge_arch_attrs
+	fi
 }
 
 run_function_safe() {
@@ -1263,9 +1304,26 @@ run_function() {
 	fi
 	local pkgfunc="$1"
 
-	msg "Starting %s()..." "$pkgfunc"
+	# clear user-specified buildflags if requested
+	if check_option "buildflags" "n"; then
+		unset CPPFLAGS CFLAGS CXXFLAGS LDFLAGS
+	fi
+
+	if check_option "debug" "y"; then
+		CFLAGS+=" $DEBUG_CFLAGS"
+		CXXFLAGS+=" $DEBUG_CXXFLAGS"
+	fi
+
+	# clear user-specified makeflags if requested
+	if check_option "makeflags" "n"; then
+		unset MAKEFLAGS
+	fi
+
+	msg "$(gettext "Starting %s()...")" "$pkgfunc"
 	cd_safe "$srcdir"
 
+	# ensure all necessary build variables are exported
+	export CPPFLAGS CFLAGS CXXFLAGS LDFLAGS MAKEFLAGS CHOST
 	# save our shell options so pkgfunc() can't override what we need
 	local shellopts=$(shopt -p)
 
@@ -1325,6 +1383,31 @@ run_package() {
 	run_function_safe "$pkgfunc"
 }
 
+# this function always returns 0 to make sure clean-up will still occur
+install_package() {
+	(( ! INSTALL )) && return
+
+	if (( ! SPLITPKG )); then
+		msg "$(gettext "Installing package %s with %s...")" "$pkgname" "$PACMAN -U"
+	else
+		msg "$(gettext "Installing %s package group with %s...")" "$pkgbase" "$PACMAN -U"
+	fi
+
+	local fullver pkgarch pkg pkglist
+
+	echo list: "${pkgname[@]}"
+	for pkg in ${pkgname[@]}; do
+		fullver=$(get_full_version)
+		pkgarch=$(get_pkg_arch $pkg)
+		pkglist+=("$PKGDEST/${pkg}-${fullver}.${pkgarch}${PKGEXT}")
+	done
+
+	if ! run_yum install "${pkglist[@]}"; then
+		warning "$(gettext "Failed to install built package(s).")"
+		return 0
+	fi
+}
+
 have_function() {
 	declare -f "$1" >/dev/null
 }
@@ -1348,6 +1431,151 @@ array_build() {
 	done
 
 	eval "${values[*]}"
+}
+
+funcgrep() {
+	{ declare -f "$1" || declare -f package; } 2>/dev/null | grep -E "$2"
+}
+
+extract_global_var() {
+	# $1: variable name
+	# $2: multivalued
+	# $3: name of output var
+
+	local attr=$1 isarray=$2 outputvar=$3 ref
+
+	if (( isarray )); then
+		array_build ref "$attr"
+		[[ ${ref[@]} ]] && array_build "$outputvar" "$attr"
+	else
+		[[ ${!attr} ]] && printf -v "$outputvar" %s "${!attr}"
+	fi
+}
+
+extract_function_var() {
+	# $1: function name
+	# $2: variable name
+	# $3: multivalued
+	# $4: name of output var
+
+	local funcname=$1 attr=$2 isarray=$3 outputvar=$4 attr_regex= decl= r=1
+
+	if (( isarray )); then
+		printf -v attr_regex '^[[:space:]]* %s\+?=\(' "$2"
+	else
+		printf -v attr_regex '^[[:space:]]* %s\+?=[^(]' "$2"
+	fi
+
+	while read -r; do
+		# strip leading whitespace and any usage of declare
+		decl=${REPLY##*([[:space:]])}
+		eval "${decl/#$attr/$outputvar}"
+
+		# entering this loop at all means we found a match, so notify the caller.
+		r=0
+	done < <(funcgrep "$funcname" "$attr_regex")
+
+	return $r
+}
+
+pkgbuild_get_attribute() {
+	# $1: package name
+	# $2: attribute name
+	# $3: multivalued
+	# $4: name of output var
+
+	local pkgname=$1 attrname=$2 isarray=$3 outputvar=$4
+
+	printf -v "$outputvar" %s ''
+
+	if [[ $pkgname ]]; then
+		extract_global_var "$attrname" "$isarray" "$outputvar"
+		extract_function_var "package_$pkgname" "$attrname" "$isarray" "$outputvar"
+	else
+		extract_global_var "$attrname" "$isarray" "$outputvar"
+	fi
+}
+
+check_build_status() {
+	if (( ! SPLITPKG )); then
+		fullver=$(get_full_version)
+		pkgarch=$(get_pkg_arch)
+		if [[ -f $PKGDEST/${pkgname}-${fullver}.${pkgarch}${PKGEXT} ]] \
+				 && ! (( FORCE || SOURCEONLY || NOBUILD || NOARCHIVE)); then
+			if (( INSTALL )); then
+				warning "$(gettext "A package has already been built, installing existing package...")"
+				install_package
+				exit 0
+			else
+				error "$(gettext "A package has already been built. (use %s to overwrite)")" "-f"
+				exit 1
+			fi
+		fi
+	else
+		allpkgbuilt=1
+		somepkgbuilt=0
+		for pkg in ${pkgname[@]}; do
+			fullver=$(get_full_version)
+			pkgarch=$(get_pkg_arch $pkg)
+			if [[ -f $PKGDEST/${pkg}-${fullver}-${pkgarch}${PKGEXT} ]]; then
+				somepkgbuilt=1
+			else
+				allpkgbuilt=0
+			fi
+		done
+		if ! (( FORCE || SOURCEONLY || NOBUILD || NOARCHIVE)); then
+			if (( allpkgbuilt )); then
+				if (( INSTALL )); then
+					warning "$(gettext "The package group has already been built, installing existing packages...")"
+					install_package
+					exit 0
+				else
+					error "$(gettext "The package group has already been built. (use %s to overwrite)")" "-f"
+					exit 1
+				fi
+			fi
+			if (( somepkgbuilt && ! PKGVERFUNC )); then
+				error "$(gettext "Part of the package group has already been built. (use %s to overwrite)")" "-f"
+				exit 1
+			fi
+		fi
+		unset allpkgbuilt somepkgbuilt
+	fi
+}
+
+backup_package_variables() {
+	local var
+	for var in ${splitpkg_overrides[@]}; do
+		local indirect="${var}_backup"
+		eval "${indirect}=(\"\${$var[@]}\")"
+	done
+}
+
+restore_package_variables() {
+	local var
+	for var in ${splitpkg_overrides[@]}; do
+		local indirect="${var}_backup"
+		if [[ -n ${!indirect} ]]; then
+			eval "${var}=(\"\${$indirect[@]}\")"
+		else
+			unset ${var}
+		fi
+	done
+}
+
+run_split_packaging() {
+	local pkgname_backup=("${pkgname[@]}")
+	for pkgname in ${pkgname_backup[@]}; do
+		pkgdir="$pkgdirbase/$pkgname"
+		mkdir "$pkgdir"
+		backup_package_variables
+		run_package $pkgname
+		#tidy_install
+		#create_package
+		#create_debug_package
+		restore_package_variables
+	done
+	pkgname=("${pkgname_backup[@]}")
 }
 
 # Canonicalize a directory path if it exists
@@ -1523,6 +1751,7 @@ usage() {
 	printf -- "$(gettext "  -C, --cleanbuild Remove %s dir before building the package")\n" "\$srcdir/"
 	printf -- "$(gettext "  -d, --nodeps     Skip all dependency checks")\n"
 	printf -- "$(gettext "  -e, --noextract  Do not extract source files (use existing %s dir)")\n" "\$srcdir/"
+	printf -- "$(gettext "  -f, --force      Overwrite existing package")\n"
 	printf -- "$(gettext "  -g, --geninteg   Generate integrity checks for source files")\n"
 	printf -- "$(gettext "  -h, --help       Show this help message and exit")\n"
 	printf -- "$(gettext "  -i, --install    Install package after successful build")\n"
@@ -1534,16 +1763,21 @@ usage() {
 	printf -- "$(gettext "  -V, --version    Show version information and exit")\n"
 	printf -- "$(gettext "  --config <file>  Use an alternate config file (instead of '%s')")\n" "$confdir/makepkg.conf"
 	printf -- "$(gettext "  --noprepare      Do not run the %s function in the %s")\n" "prepare()" "$BUILDSCRIPT"
+	printf -- "$(gettext "  --pkg <list>     Only build listed packages from a split package")\n"
 	printf -- "$(gettext "  --skipchecksums  Do not verify checksums of the source files")\n"
 	printf -- "$(gettext "  --skipinteg      Do not perform any verification checks on source files")\n"
 	printf -- "$(gettext "  --verifysource   Download source files (if needed) and perform integrity checks")\n"
+	echo
+	printf -- "$(gettext "These options can be passed to %s:")\n" "yum"
+	echo
+	printf -- "$(gettext "  --noconfirm      Do not ask for confirmation when installing")\n"
 	echo
 	printf -- "$(gettext "If %s is not specified, %s will look for '%s'")\n" "-p" "makepkg" "$BUILDSCRIPT"
 	echo
 }
 
 version() {
-	printf "makepkg (pacman) %s\n" "$makepkg_version"
+	printf "makepkg (rpm remix) %s\n" "$makepkg_version"
 	printf -- "$(gettext "\
 Copyright (c) 2006-2014 Pacman Development Team <pacman-dev@archlinux.org>.\n\
 Copyright (C) 2002-2006 Judd Vinet <jvinet@zeroflux.org>.\n\n\
@@ -1566,10 +1800,14 @@ fi
 ARGLIST=("$@")
 
 # Parse Command Line Options.
-OPT_SHORT="hcCoiemRp:gVdL"
+OPT_SHORT="hcCoiemRp:gVdLf"
 OPT_LONG=('help' 'clean' 'cleanbuild' 'nobuild' 'install' 'noextract' 'nocolor' 'repackage'
           'noprepare' 'config:' 'geninteg' 'verifysource' 'version' 'nodeps' 'check'
-          'skipchecksums' 'skipinteg' 'log')
+          'skipchecksums' 'skipinteg' 'log' 'force' 'pkg:')
+
+# Yum Options
+OPT_LONG+=('noconfirm')
+
 if ! parseopts "$OPT_SHORT" "${OPT_LONG[@]}" -- "$@"; then
 	exit 1 # E_INVALID_OPTION;
 fi
@@ -1578,12 +1816,17 @@ unset OPT_SHORT OPT_LONG OPTRET
 
 while true; do
 	case "$1" in
+		# Yum Options
+		--noconfirm)      YUM_OPTS+=" -y" ;;
+
+		# Makepkg Options
 		-c|--clean)       CLEANUP=1 ;;
 		-C|--cleanbuild)  CLEANBUILD=1 ;;
 		--check)          RUN_CHECK='y' ;;
 		--config)         shift; MAKEPKG_CONF=$1 ;;
 		-d|--nodeps)      NODEPS=1 ;;
 		-e|--noextract)   NOEXTRACT=1 ;;
+		-f|--force)       FORCE=1 ;;
 		-g|--geninteg)    GENINTEG=1 ;;
 		-i|--install)     INSTALL=1 ;;
 		-L|--log)         LOGGING=1 ;;
@@ -1592,6 +1835,7 @@ while true; do
 		--noprepare)      RUN_PREPARE='n' ;;
 		-o|--nobuild)     NOBUILD=1 ;;
 		-p)               shift; BUILDFILE=$1 ;;
+		--pkg)            shift; IFS=, read -ra p <<<"$1"; PKGLIST+=("${p[@]}"); unset p ;;
 		-R|--repackage)   REPKG=1 ;;
 		--skipchecksums)  SKIPCHECKSUMS=1 ;;
 		--skipinteg)      SKIPCHECKSUMS=1; SKIPPGPCHECK=1 ;;
@@ -1647,6 +1891,10 @@ else
 	exit 1 # $E_CONFIG_ERROR
 fi
 
+# set pacman command if not already defined
+YUM=${YUM:-yum}
+# save full path to command as PATH may change when sourcing /etc/profile
+YUM_PATH=$(type -P $YUM)
 
 # check if messages are to be printed using color
 unset ALL_OFF BOLD BLUE GREEN RED YELLOW
@@ -1786,6 +2034,10 @@ if (( GENINTEG )); then
 	exit 0 # $E_OK
 fi
 
+if (( ${#pkgname[@]} > 1 )); then
+	SPLITPKG=1
+fi
+
 if have_function prepare; then
 	# "Hide" prepare() function if not going to be run
 	if [[ $RUN_PREPARE != "n" ]]; then
@@ -1803,8 +2055,18 @@ if have_function check; then
 fi
 if have_function package; then
 	PKGFUNC=1
+elif [[ $SPLITPKG -eq 0 ]] && have_function package_${pkgname}; then
+	SPLITPKG=1
 fi
 
+if [[ -n "${PKGLIST[@]}" ]]; then
+	unset pkgname
+	pkgname=("${PKGLIST[@]}")
+fi
+
+if (( ! PKGVERFUNC )); then
+	check_build_status
+fi
 
 if (( NODEPS || ( VERIFYSOURCE && !DEP_BIN ) )); then
 	# no warning message needed for nobuild
@@ -1878,9 +2140,13 @@ fpmx() {
 	else
 		local vendor_param="--vendor \"$RPM_VENDOR\""
 	fi
-
+	if [[ "$install" = "" ]]; then
+		local after_install_param=''
+	else
+		local after_install_param="--after-install \"${startdir}/${install}\""
+	fi
 	local nm=$1; shift
-	local cmd="fpm -s dir -t rpm -a $fpm_arch"
+	local cmd="fpm -s dir -t rpm --force -a $fpm_arch"
 	cmd="$cmd $rpm_dist_param"
 	cmd="$cmd --rpm-os linux"
 	cmd="$cmd --package \"$PKGDEST\"" # output path
@@ -1893,6 +2159,7 @@ fpmx() {
 	cmd="$cmd --iteration \"$pkgrel\""
 	cmd="$cmd $epoch_param"
 	cmd="$cmd -C \"$pkgdir\""         # chdir here for contents
+	cmd="$cmd $after_install_param"
 	for item in "${depends[@]}"; do
 		cmd="$cmd -d \"$item\""
 	done
@@ -1952,8 +2219,18 @@ else
 		cd_safe "$startdir"
 	fi
 
-	if (( PKGFUNC )); then
-		run_package
+	chmod 755 "$pkgdirbase"
+	if (( ! SPLITPKG )); then
+		pkgdir="$pkgdirbase/$pkgname"
+		mkdir "$pkgdir"
+		if (( PKGFUNC )); then
+			run_package
+		fi
+		#tidy_install
+		#create_package
+		#create_debug_package
+	else
+		run_split_packaging
 	fi
 fi
 
@@ -1965,7 +2242,6 @@ fi
 
 msg "$(gettext "Finished making: %s")" "$pkgbase $basever ($(date))"
 
-#cd_safe "$startdir"
 install_package
 
 exit 0 #E_OK
