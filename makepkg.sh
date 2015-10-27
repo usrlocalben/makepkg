@@ -73,7 +73,7 @@ SKIPCHECKSUMS=0
 SPLITPKG=0
 VERIFYSOURCE=0
 
-YUM_OPTS=
+RPM_OPTS=
 
 shopt -s extglob
 
@@ -978,12 +978,12 @@ source_has_signatures() {
 	return 1
 }
 
-run_yum() {
+run_rpm() {
 	local cmd
 	if [[ "$1" = "install" ]]; then
-		cmd=("$YUM_PATH" $YUM_OPTS "$@")
+		cmd=("$RPM_PATH" $RPM_OPTS "$@")
 	else
-		cmd=("$YUM_PATH" "$@")
+		cmd=("$RPM_PATH" "$@")
 	fi
 	if [[ $1 != -@(T|Qq) ]]; then
 		if type -p sudo >/dev/null; then
@@ -1513,14 +1513,13 @@ install_package() {
 
 	local fullver pkgarch pkg pkglist
 
-	echo list: "${pkgname[@]}"
 	for pkg in ${pkgname[@]}; do
 		fullver=$(get_full_version)
 		pkgarch=$(get_pkg_arch $pkg)
 		pkglist+=("$PKGDEST/${pkg}-${fullver}.${pkgarch}${PKGEXT}")
 	done
 
-	if ! run_yum install "${pkglist[@]}"; then
+	if ! run_rpm -i --nodeps "${pkglist[@]}"; then
 		warning "$(gettext "Failed to install built package(s).")"
 		return 0
 	fi
@@ -1886,10 +1885,6 @@ usage() {
 	printf -- "$(gettext "  --skipinteg      Do not perform any verification checks on source files")\n"
 	printf -- "$(gettext "  --verifysource   Download source files (if needed) and perform integrity checks")\n"
 	echo
-	printf -- "$(gettext "These options can be passed to %s:")\n" "yum"
-	echo
-	printf -- "$(gettext "  --noconfirm      Do not ask for confirmation when installing")\n"
-	echo
 	printf -- "$(gettext "If %s is not specified, %s will look for '%s'")\n" "-p" "makepkg" "$BUILDSCRIPT"
 	echo
 }
@@ -1923,9 +1918,6 @@ OPT_LONG=('help' 'clean' 'cleanbuild' 'nobuild' 'install' 'noextract' 'nocolor' 
           'noprepare' 'config:' 'geninteg' 'verifysource' 'version' 'nodeps' 'check'
           'skipchecksums' 'skipinteg' 'log' 'force' 'pkg:' 'noarchive')
 
-# Yum Options
-OPT_LONG+=('noconfirm')
-
 if ! parseopts "$OPT_SHORT" "${OPT_LONG[@]}" -- "$@"; then
 	exit 1 # E_INVALID_OPTION;
 fi
@@ -1934,9 +1926,6 @@ unset OPT_SHORT OPT_LONG OPTRET
 
 while true; do
 	case "$1" in
-		# Yum Options
-		--noconfirm)      YUM_OPTS+=" -y" ;;
-
 		# Makepkg Options
 		-c|--clean)       CLEANUP=1 ;;
 		-C|--cleanbuild)  CLEANBUILD=1 ;;
@@ -2011,9 +2000,9 @@ else
 fi
 
 # set pacman command if not already defined
-YUM=${YUM:-yum}
+RPM=${RPM:-rpm}
 # save full path to command as PATH may change when sourcing /etc/profile
-YUM_PATH=$(type -P $YUM)
+RPM_PATH=$(type -P $RPM)
 
 # check if messages are to be printed using color
 unset ALL_OFF BOLD BLUE GREEN RED YELLOW
