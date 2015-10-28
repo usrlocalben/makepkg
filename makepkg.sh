@@ -1516,7 +1516,7 @@ install_package() {
 	for pkg in ${pkgname[@]}; do
 		fullver=$(get_full_version)
 		pkgarch=$(get_pkg_arch $pkg)
-		pkglist+=("$PKGDEST/${pkg}-${fullver}.${pkgarch}${PKGEXT}")
+		pkglist+=("-U" "$PKGDEST/${pkg}-${fullver}.${pkgarch}${PKGEXT}")
 	done
 
 	if ! run_rpm -i --nodeps "${pkglist[@]}"; then
