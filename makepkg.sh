@@ -850,7 +850,7 @@ get_full_version() {
 get_pkg_arch() {
 	if [[ -z $1 ]]; then
 		if [[ $arch = "any" ]]; then
-			printf "%s\n" "any"
+			printf "%s\n" "noarch"
 		else
 			printf "%s\n" "$CARCH"
 		fi
@@ -859,7 +859,7 @@ get_pkg_arch() {
 		pkgbuild_get_attribute "$1" arch 0 arch_override
 		(( ${#arch_override[@]} == 0 )) && arch_override=("${arch[@]}")
 		if [[ $arch_override = "any" ]]; then
-			printf "%s\n" "any"
+			printf "%s\n" "noarch"
 		else
 			printf "%s\n" "$CARCH"
 		fi
@@ -1506,9 +1506,9 @@ install_package() {
 	(( ! INSTALL )) && return
 
 	if (( ! SPLITPKG )); then
-		msg "$(gettext "Installing package %s with %s...")" "$pkgname" "$PACMAN -U"
+		msg "$(gettext "Installing package %s with %s...")" "$pkgname" "$RPM -i --nodeps"
 	else
-		msg "$(gettext "Installing %s package group with %s...")" "$pkgbase" "$PACMAN -U"
+		msg "$(gettext "Installing %s package group with %s...")" "$pkgbase" "$RPM -i --nodeps"
 	fi
 
 	local fullver pkgarch pkg pkglist
