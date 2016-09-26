@@ -45,7 +45,7 @@ declare -r startdir="$PWD"
 
 packaging_options=('strip')
 other_options=('ccache' 'distcc' 'buildflags' 'makeflags')
-splitpkg_overrides=('pkgdesc' 'arch' 'url' 'license' 'groups' 'depends'
+splitpkg_overrides=('pkgdesc' 'arch' 'url' 'license' 'groups' 'backup' 'depends'
                     'optdepends' 'provides' 'conflicts' 'replaces' 'backup'
                     'options' 'install' 'changelog')
 readonly -a packaging_options other_options splitpkg_overrides
@@ -2269,6 +2269,9 @@ run_fpm() {
 	cmd="$cmd $epoch_param"
 	cmd="$cmd -C \"$pkgdir\""         # chdir here for contents
 	cmd="$cmd $after_install_param"
+	for item in "${backup[@]}"; do
+		cmd="$cmd --config-files \"$item\""
+	done
 	for item in "${depends[@]}"; do
 		cmd="$cmd -d \"$item\""
 	done
