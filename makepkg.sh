@@ -2257,12 +2257,14 @@ run_fpm() {
 	local cmd="fpm -s dir -t rpm --force -a $fpm_arch"
 	cmd="$cmd $rpm_dist_param"
 	cmd="$cmd --rpm-os linux"
+	# cmd="$cmd --debug-workspace"  # skips cleanup of /tmp and allows inspection of SPECFILE
 	cmd="$cmd --rpm-auto-add-directories"
 	cmd="$cmd --package \"$PKGDEST\"" # output path
 	cmd="$cmd $maintainer_param"
 	cmd="$cmd $description_param"
 	cmd="$cmd $url_param"
 	cmd="$cmd $vendor_param"
+	cmd="$cmd --license \"${license:-unknown}\""
 	cmd="$cmd --name \"$nm\""
 	cmd="$cmd --version \"$pkgver\""
 	cmd="$cmd --iteration \"$pkgrel\""
@@ -2277,6 +2279,7 @@ run_fpm() {
 	done
 	cmd="$cmd --rpm-use-file-permissions --rpm-user root --rpm-group root"
 	cmd="$cmd $@"
+        # echo $cmd  # for debugging
 	eval $cmd
 }
 
