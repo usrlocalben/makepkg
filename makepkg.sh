@@ -45,7 +45,7 @@ declare -r startdir="$PWD"
 
 packaging_options=('strip')
 other_options=('ccache' 'distcc' 'buildflags' 'makeflags')
-splitpkg_overrides=('pkgdesc' 'arch' 'url' 'license' 'groups' 'backup' 'depends'
+splitpkg_overrides=('pkgdesc' 'arch' 'url' 'license' 'groups' 'depends'
                     'optdepends' 'provides' 'conflicts' 'replaces' 'backup'
                     'options' 'install' 'changelog')
 readonly -a packaging_options other_options splitpkg_overrides
