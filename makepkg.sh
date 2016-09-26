@@ -2269,6 +2269,9 @@ run_fpm() {
 	cmd="$cmd $epoch_param"
 	cmd="$cmd -C \"$pkgdir\""         # chdir here for contents
 	cmd="$cmd $after_install_param"
+	for item in "${backup[@]}"; do
+		cmd="$cmd --config-files \"$item\""
+	done
 	for item in "${depends[@]}"; do
 		cmd="$cmd -d \"$item\""
 	done
