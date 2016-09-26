@@ -2248,6 +2248,12 @@ run_fpm() {
 	else
 		local vendor_param="--vendor \"$RPM_VENDOR\""
 	fi
+	if [[ "$LICENSE" = "" ]]; then
+		warning "RPM will have Soltra EULA License"
+		local license_param=''
+	else
+		local license_param="--license \"$LICENSE\""
+	fi
 	if [[ "$install" = "" ]]; then
 		local after_install_param=''
 	else
@@ -2263,6 +2269,7 @@ run_fpm() {
 	cmd="$cmd $description_param"
 	cmd="$cmd $url_param"
 	cmd="$cmd $vendor_param"
+	cmd="$cmd $license_param"
 	cmd="$cmd --name \"$nm\""
 	cmd="$cmd --version \"$pkgver\""
 	cmd="$cmd --iteration \"$pkgrel\""
