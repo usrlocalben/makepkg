@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # minimal adaptation of archlinux's 'makepkg' for centos/rhel via fpm
-# original: 
+# original:
 # https://projects.archlinux.org/pacman.git/tree/scripts/makepkg.sh.in
 #
 
@@ -2289,6 +2289,7 @@ run_fpm() {
 		local after_install_param=''
 	else
 		local after_install_param="--after-install \"${startdir}/${post_install}\""
+        fi
 	if [[ "$pre_upgrade" = "" ]]; then
 		local before_upgrade_param=''
 	else
@@ -2314,7 +2315,7 @@ run_fpm() {
 	local cmd="fpm -s dir -t rpm --force -a $fpm_arch"
 	cmd="$cmd $rpm_dist_param"
 	cmd="$cmd --rpm-os linux"
-	# cmd="$cmd --debug-workspace"  # skips cleanup of /tmp and allows inspection of SPECFILE
+	cmd="$cmd --debug-workspace"  # skips cleanup of /tmp and allows inspection of SPECFILE
 	cmd="$cmd --rpm-auto-add-directories"
 	cmd="$cmd --package \"$PKGDEST\"" # output path
 	cmd="$cmd $maintainer_param"
@@ -2340,9 +2341,18 @@ run_fpm() {
 		cmd="$cmd -d \"$item\""
 	done
 	cmd="$cmd --rpm-use-file-permissions --rpm-user root --rpm-group root"
+        cmd="$cmd --workdir=/tmp/${pkgver}-${pkgrel}/"
 	cmd="$cmd $@"
-        # echo $cmd  # for debugging
+        # Create tarball of Build Artifacts:
+        #  1. command used to call fpm
+        #  2. fpm temp dir (contains SPECFILE for rpm)
+        mkdir /tmp/${pkgver}-${pkgrel}/
+        echo $cmd > /tmp/${pkgver}-${pkgrel}/fpm_cmd_${pgkname}_${pkgver}_${pkgrel}.txt
 	eval $cmd
+        tar -czvf ../../fpm_build_artifacts_${pkgver}-${pkgrel}.tar.gz \
+                  /tmp/${pkgver}-${pkgrel}/ \
+                  ../../PKGBUILD
+
 }
 
 # get back to our src directory so we can begin with sources
