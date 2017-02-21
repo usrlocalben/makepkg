@@ -2340,7 +2340,12 @@ run_fpm() {
 	for item in "${depends[@]}"; do
 		cmd="$cmd -d \"$item\""
 	done
-	cmd="$cmd --rpm-use-file-permissions --rpm-user root --rpm-group root"
+	cmd="$cmd --rpm-use-file-permissions"  # affects mode only (not owner/group)
+        cmd="$cmd --rpm-user root"  # overrides use-file-permissions
+        cmd="$cmd --rpm-group root"
+        for item in "${fpmargs[@]}"; do  # created for --rpm-attr
+                cmd="${cmd} ${item}";
+        done
         cmd="$cmd --workdir=/tmp/${pkgver}-${pkgrel}/"
 	cmd="$cmd $@"
         # Create tarball of Build Artifacts:
