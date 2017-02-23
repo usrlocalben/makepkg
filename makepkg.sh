@@ -2354,7 +2354,7 @@ run_fpm() {
         mkdir /tmp/${pkgver}-${pkgrel}/
         echo $cmd > /tmp/${pkgver}-${pkgrel}/fpm_cmd_${pgkname}_${pkgver}_${pkgrel}.txt
 	eval $cmd
-        tar -czvf ../../fpm_build_artifacts_${pkgver}-${pkgrel}.tar.gz \
+        tar -czf ../../fpm_build_artifacts_${pkgver}-${pkgrel}.tar.gz \
                   /tmp/${pkgver}-${pkgrel}/ \
                   ../../PKGBUILD
 
