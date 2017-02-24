@@ -2315,7 +2315,7 @@ run_fpm() {
 	local cmd="fpm -s dir -t rpm --force -a $fpm_arch"
 	cmd="$cmd $rpm_dist_param"
 	cmd="$cmd --rpm-os linux"
-	cmd="$cmd --debug-workspace"  # skips cleanup of /tmp and allows inspection of SPECFILE
+	# cmd="$cmd --debug-workspace"  # skips cleanup of /tmp and allows inspection of SPECFILE
 	cmd="$cmd --rpm-auto-add-directories"
 	cmd="$cmd --package \"$PKGDEST\"" # output path
 	cmd="$cmd $maintainer_param"
