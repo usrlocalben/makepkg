@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # minimal adaptation of archlinux's 'makepkg' for centos/rhel via fpm
-# original: 
+# original:
 # https://projects.archlinux.org/pacman.git/tree/scripts/makepkg.sh.in
 #
 
@@ -2248,11 +2248,69 @@ run_fpm() {
 	else
 		local vendor_param="--vendor \"$RPM_VENDOR\""
 	fi
-	if [[ "$install" = "" ]]; then
+#
+# arch - https://wiki.archlinux.org/index.php/PKGBUILD
+#
+# pre_install  - The script is run right before files are extracted. One argument is passed: new package version.
+# post_install - The script is run right after files are extracted. One argument is passed: new package version.
+# pre_upgrade  - The script is run right before files are extracted. Two arguments are passed in the following order: new package version, old package version.
+# post_upgrade - The script is run after files are extracted. Two arguments are passed in the following order: new package version, old package version.
+# pre_remove   - The script is run right before files are removed. One argument is passed: old package version.
+# post_remove  - The script is run right after files are removed. One argument is passed: old package version.
+#
+# fpm - https://github.com/jordansissel/fpm/wiki
+#
+# --post-install   FILE (DEPRECATED, use --after-install) A script to be run after package installation
+# --pre-install    FILE (DEPRECATED, use --before-install) A script to be run before package installation
+# --post-uninstall FILE (DEPRECATED, use --after-remove) A script to be run after package removal
+# --pre-uninstall  FILE (DEPRECATED, use --before-remove) A script to be run before package removal
+# --after-install  FILE A script to be run after package installation
+# --before-install FILE A script to be run before package installation
+# --after-remove   FILE A script to be run after package removal
+# --before-remove  FILE A script to be run before package removal
+# --after-upgrade  FILE A script to be run after package upgrade. If not specified,  --before-install, --after-install, --before-remove, and --after-remove will behave in a backwards-compatible manner (they will not be upgrade-case aware).  Currently only supports deb and rpm packages.
+# --before-upgrade FILE A script to be run before package upgrade. If not specified, --before-install, --after-install, --before-remove, and --after-remove will behave in a backwards-compatible manner (they will not be upgrade-case aware). Currently only supports deb and rpm packages.
+#
+# rpm - https://fedoraproject.org/wiki/Packaging:Scriptlets
+#
+# %pretrans	install	upgrade
+# %pre 		install	upgrade
+# %post 	install	upgrade
+# %preun 		upgrade	uninstall
+# %postun 		upgrade	uninstall
+# %posttrans 	install	upgrade
+
+	if [[ "$pre_install" = "" ]]; then
+		local before_install_param=''
+	else
+		local before_install_param="--before-install \"${startdir}/${pre_install}\""
+	fi
+	if [[ "$post_install" = "" ]]; then
 		local after_install_param=''
 	else
-		local after_install_param="--after-install \"${startdir}/${install}\""
+		local after_install_param="--after-install \"${startdir}/${post_install}\""
+        fi
+	if [[ "$pre_upgrade" = "" ]]; then
+		local before_upgrade_param=''
+	else
+		local before_upgrade_param="--before-upgrade \"${startdir}/${pre_upgrade}\""
 	fi
+	if [[ "$post_upgrade" = "" ]]; then
+		local after_upgrade_param=''
+	else
+		local after_upgrade_param="--after-upgrade \"${startdir}/${post_upgrade}\""
+	fi
+	if [[ "$pre_remove" = "" ]]; then
+		local before_remove_param=''
+	else
+		local before_remove_param="--post-remove \"${startdir}/${pre_remove}\""
+	fi
+	if [[ "$post_remove" = "" ]]; then
+		local after_remove_param=''
+	else
+		local after_remove_param="--after-remove \"${startdir}/${post_remove}\""
+	fi
+
 	local nm=$1; shift
 	local cmd="fpm -s dir -t rpm --force -a $fpm_arch"
 	cmd="$cmd $rpm_dist_param"
@@ -2270,17 +2328,36 @@ run_fpm() {
 	cmd="$cmd --iteration \"$pkgrel\""
 	cmd="$cmd $epoch_param"
 	cmd="$cmd -C \"$pkgdir\""         # chdir here for contents
+	cmd="$cmd $before_install_param"
 	cmd="$cmd $after_install_param"
+	cmd="$cmd $before_upgrade_param"
+	cmd="$cmd $after_upgrade_param"
+	cmd="$cmd $before_remove_param"
+	cmd="$cmd $after_remove_param"
 	for item in "${backup[@]}"; do
 		cmd="$cmd --config-files \"$item\""
 	done
 	for item in "${depends[@]}"; do
 		cmd="$cmd -d \"$item\""
 	done
-	cmd="$cmd --rpm-use-file-permissions --rpm-user root --rpm-group root"
+	cmd="$cmd --rpm-use-file-permissions"  # affects mode only (not owner/group)
+        cmd="$cmd --rpm-user root"  # overrides use-file-permissions
+        cmd="$cmd --rpm-group root"
+        for item in "${fpmargs[@]}"; do  # created for --rpm-attr
+                cmd="${cmd} ${item}";
+        done
+        cmd="$cmd --workdir=/tmp/${pkgver}-${pkgrel}/"
 	cmd="$cmd $@"
-        # echo $cmd  # for debugging
+        # Create tarball of Build Artifacts:
+        #  1. command used to call fpm
+        #  2. fpm temp dir (contains SPECFILE for rpm)
+        mkdir /tmp/${pkgver}-${pkgrel}/
+        echo $cmd > /tmp/${pkgver}-${pkgrel}/fpm_cmd_${pgkname}_${pkgver}_${pkgrel}.txt
 	eval $cmd
+        tar -czf ../../fpm_build_artifacts_${pkgver}-${pkgrel}.tar.gz \
+                  /tmp/${pkgver}-${pkgrel}/ \
+                  ../../PKGBUILD
+
 }
 
 # get back to our src directory so we can begin with sources
